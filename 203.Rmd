@@ -1,0 +1,1135 @@
+---
+title: "```{=latex}\n\\vspace{5cm} \\LARGE \n\\textcolor{yellow}{\\textbf{What factors
+  / variables or combinations thereof are associated with \"positive deviants\".}}\n```\n"
+author: "ID-203"
+date: "2022-09-06"
+output:
+  html_document: default
+  
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F, message = F, include = T, warning=F)
+```
+
+
+
+```{r warning=FALSE, message=FALSE, echo=FALSE, include=FALSE}
+
+### Loading the libraries
+library(png)
+library(grid)
+library(dplyr)
+library(haven)
+library(mice)
+library(Boruta)
+library(tibble)
+library(ggplot2)
+library(dplyr)
+library(ranger)
+library(gridExtra)
+library(kableExtra)
+library(glmnet)   
+```
+
+
+```{r eval=FALSE}
+### Loading the company logo
+
+img <- readPNG("logo.png")
+grid.raster(img)
+```
+
+
+# \textcolor{yellow}{Introduction}
+
+One of the most efficient ways to help societies, is to focus on what resources the communities or families already have that can be leveraged rather than what they do not have. Such behaviours are likely to be affordable, acceptable, and sustainable because they are already practiced by at risk people and they do not conflict with local culture (Marsh et al. 2004). This concept is referred to as “positive deviance” and it was utilised in this study to identify behaviours and characteristics associated with young children who thrive against the odds. This information will help to close the performance gap between the poor children and their better-off peers at the point of entry into school, and enable scalable interventions.
+
+This report entails analysing a rich child outcomes dataset of over 15 000 South African children (aged 50-69 months) so as to make meaningful contributions to the state of ECD in South Africa. As a starting point for this project, I will first give a description of the statistical methods used to select variables associated with children who have achieved an unexpected good outcome despite high risk. Afterwards, the results obtained using these methods are reported. Finally, the implications of the results are discussed together with the limitations of statistical methods used.
+
+
+
+# \textcolor{yellow}{Methodology}
+
+Modern data sets are often described with far too many variables and these variables are often unknown a priori and irrelevant to the classification (Kursa and Rudnicki, 2010).  Therefore, there is need of a process referred to as feature selection which is used to identify and remove irrelevant/ redundant features from a dataset in order to improve the performance of the machine learning algorithms. This method is employed to our dataset which has 1289 variables of which most of these variables are likely to be poorly linked to our target variable. These variables include; Child outcome assessments across five developmental domains, Teacher rated socio-emotional functioning, Early Learning Programme (ELP) characteristics, Geolocations, Height for age, Practitioner Interviews and Home Learning Environment interviews. 
+
+There are three general classes of feature selection algorithms which are; filters, embedded and wrappers. Filters are based on some important measure which is independent from any classification method while embedded algorithms perform feature selection during the classifier training procedure (Kursa and Rudnicki, 2011). On the other hand, wrappers are usually created around particular classifier, but may in principle use any classifier that also provides some measure of feature importance. In this report the wrapper methods built around the random forest classification algorithm were used. The features of the random forest algorithm make it a promising candidate for use as wrapper's engine as it is relatively quick, can usually be run without tuning of parameters and it gives a numerical estimate of the feature importance (Karegowda et.al, 2010).  Furthermore, Kursa and Rudnicki (2011) concluded that variable importance measure provided by the random forest classifier is a very useful base for the wrapper algorithms.
+
+Boruta, a random forest-based feature selection method, was the primary algorithm used in this report as it provides unbiased and stable selection of important and non-important attributes. This method evaluates the relevance of variables in the information system by comparing the importance measure provided by random forest for the original attributes with that obtained for the artificially added random attributes. In order to obtain statistically significant results this procedure is repeated several times, with contrast variables generated independently for each iteration. Kursa and Rudnicki (2011) analysed the gene expression levels of leukaemia patients and the Boruta algorithm resulted in better estimates of the important features compared to Artificial Contrasts with Ensembles (ACE). Furthermore, Degenhardt and Szymczak (2019) recommended the Boruta approach for the analysis of high-dimensional data sets. 
+
+In order to verify the results given by Boruta algorithm, Ranger algorithm was used which also implements random forests but in a faster way and this makes a huge difference in high dimensionality.  After the tree is fitted by randomly shuffling each predictor’s data once at a time, the difference between the evaluation criterion before and after the shuffling gives the permutation importance (Tiyasha et.at, 2021). Therefore, important variables will be affected by this random sampling, whereas unimportant predictors will show minor differences.
+
+However, for these algorithms to work well in R programming, the dataset should be free from missing values. Given the nature of our dataset, missing values cannot be avoided, therefore multiple imputation can offer substantial solutions (Acock, 2005). Following that, two methods were applied to deal with missing values. The first method was to delete all case with more than 20% missing values. The second method was imputation through using an R package called MICE which detects which variables in the data set have missing information. It does imputation by using information given from the non-missing predictors to provide an estimate of the missing values.
+
+That being said, all the analysis was done in R programming using different R packages as detailed in the Rmd file. The unit of measurement used throughout the analysis was the individual child. The analysis was divided into four tools used to conduct baseline assessments of ELPs as well as the child data and the remaining variables. In addition, since the project is centred around young children who thrive against the odds, only the observations which fall under the first two quartiles of ELP fees charged per month were considered. The target variable was a binary variable with either the child performing exceptionally well despite their circumstances and those not performing well. 
+
+In the following section the detailed results of running the Boruta and ranger models is given and the variables which were found to be important to the success of the outliers are also highlighted.
+
+
+```{r}
+### Loading and reading the data
+
+data_stata = read_dta("DataDrive2030_PD_EXTERNAL.dta")
+#data_stata = read_dta("DataDrive2030_PD_EXTERNAL_31AUG2022.dta")
+write.csv(data_stata, file = "data.csv")
+data_csv<-read.csv("data.csv")
+```
+
+
+
+```{r}
+############################## Preparing the PD variable ###################################
+
+
+### Taking only children who pay fees less than R290
+data<-data_csv[data_csv$pri_fees_amount <= 290,] 
+
+### Renaming the PD variable
+data=data %>% 
+rename(pd=PD_1_INT_total_elom_CHILD) 
+
+### Making the pd variable a factor
+data[,'pd']<-factor(data[,'pd'])  
+
+### Missing values for positive deviant
+missing<-sum(is.na(data$pd))     
+
+### Removing the NAs in the response variable
+dat<-data[!is.na(data$pd),] 
+
+### Removing variables correlated to pd
+dat<-dat%>%
+  dplyr::select(-contains("PD_"),pd)%>% 
+ dplyr::select(-contains("fees"),pd)%>%  
+ dplyr::select(-contains("child_total_elom"),pd)%>% 
+ dplyr::select(-contains("child_id"),pd)
+
+```
+
+# \textcolor{yellow}{Results}
+
+This section aims to identify variables associated with young children who thrive against the odds. The Boruta algorithm was used to identify the important features while the Ranger algorithm was used to confirm the results. The Boruta algorithm by default runs 100 iterations and the TentativeRoughFix function in Boruta package is used to do a tentative rough fix. On the other hand, because of the memory efficiency of the Ranger method, the algorithm was repeated 10 times and the average taken so as to improve the accuracy of the results. The following sub sections report on the results obtained after splitting the dataset into 5 categories with the last part of the analysis constituting further analysis of the overall results. Furthermore, Lasso Regularization was run over the important variables obtained from all categories in order to validate the results from both Boruta and Ranger algorithms. 
+
+\newpage
+
+## Principal Interview Variables
+
+Apart from the basic details of the ELP, the Principal Interview covers questions about the operational aspects of the programme. The Boruta algorithm performed 99 iterations and 34 attributes were confirmed important while 47 were unimportant. A full list of all the important attributes is given in appendix1. Figure 1 shows the top 15 important variables after running the Boruta and Ranger algorithms. The variables are more or less similar for both algorithms with varying rankings.
+
+```{r warning=FALSE, message=FALSE, echo=FALSE, include=FALSE}
+
+######################### Data Cleaning - Principal interview Variables #####################
+
+### Selecting all Principal interview Variables
+all_pri<- dat%>%
+  dplyr::select(contains("pri_"),pd)
+
+
+### Dropping variables with more than 20% nas  
+na_pri<-all_pri[, colMeans(is.na(all_pri)) <= 0.2]   
+
+
+### Imputing missing values using mice package
+imp <- mice(na_pri, ridge = 0.0001, threshold=1.1,seed = 2022)
+imp_pri<-complete(imp)
+imp_pri <-imp_pri[, colMeans(is.na(imp_pri)) <= 0]  
+
+
+### Converting variable classes 
+x <- sapply(imp_pri, is.character)
+imp_pri[x] <- lapply(imp_pri[x], as.factor)
+
+x <- sapply(imp_pri, is.integer)
+imp_pri[x] <- lapply(imp_pri[x], as.numeric)
+
+
+### Dropping variables with 1 unique value
+unq_pri<-imp_pri  %>%
+     dplyr::select(where(~ n_distinct(.) > 1))  
+
+
+### Removing factors of level 50 and above
+good <- names(unq_pri)[sapply(unq_pri, nlevels) < 50] 
+unq_pri <- unq_pri %>% dplyr::select(good)
+
+
+### Scaling independent numerical variables 
+pri<-unq_pri %>%
+    mutate_if(is.numeric, scale)
+
+
+######################### BORUTA package on the Principal interview Variables ##############
+
+set.seed(2022)
+boruta1 <- Boruta(pd~., data =pri)
+#print(boruta1)
+
+### Fixing Tentative attributes
+roughFixMod <- TentativeRoughFix(boruta1)
+imps <- attStats(roughFixMod)
+
+### Variable Importance Scores
+imps2 = imps[imps$decision != 'Rejected', c('meanImp', 'decision')]
+boruta_pri<-imps2[order(-imps2$meanImp),]  # descending sort
+
+### Creating a data frame with only top 15 important variables
+b<-boruta_pri[ 1:15, c(1), drop=FALSE] 
+df1<-round(data.frame(b),1)
+df1 <- df1 %>% 
+  rownames_to_column(var = "Variables")
+
+
+### Plotting the graph for the first 15 important features
+
+bor1<-ggplot(data=df1, aes(reorder(Variables,meanImp), y=meanImp, fill=meanImp)) +
+  geom_bar(stat="identity") + 
+  scale_fill_gradient(low="darkgoldenrod1",high="darkgoldenrod4") +
+  geom_text(aes(label=meanImp), 
+        position = position_dodge(0.9),hjust=1, color="black", size=2)+
+   scale_x_discrete(guide = guide_axis(check.overlap = TRUE))+
+  theme_minimal()+coord_flip()+ ggtitle("Boruta Algorithm") +
+  theme(text = element_text(size=8))+
+  xlab("Most Important Variables") + ylab("Mean Importance") 
+
+pri1<-bor1 + theme(legend.position="none")
+
+### Creating a table of important variables
+tab1<-boruta_pri
+tab1<-data.frame(rownames(tab1))
+colnames(tab1) <- "Pri_Variables"  
+
+
+                                                   
+###################### Ranger Principal interview Variables ################################
+
+### Running the ranger model 10 times
+set.seed(2022)
+xy1 <- replicate(10, {
+ ranger1 <- ranger(pd ~ .,
+                 data = pri,
+                 importance = "permutation")
+ importance(ranger1)
+}, simplify = FALSE)
+ 
+  if(is.list(xy1)) {
+    out <- do.call("cbind", lapply(xy1, function(x) x[]))
+    out <- as.data.frame(out, stringsAsFactors = TRUE)
+  } else out <- data.frame(Overall = beta[])
+  out <- abs(out[rownames(out) != "(Intercept)",,drop = FALSE])
+
+### Creating a data frame with only top 15 important variables
+b<-rowMeans(out)             #Getting the means from 10 iterations
+rng_pri<-head(b[order(-b)],15)
+
+df2<-round(data.frame(rng_pri),4)
+df2 <- df2 %>% 
+  rownames_to_column(var = "Variables")
+
+### Plotting the graph for the first 15 important features
+
+rng1<-ggplot(data=df2, aes(reorder(Variables,rng_pri), y=rng_pri, fill=rng_pri)) +
+  geom_bar(stat="identity")+ 
+    scale_fill_gradient(low="darkgoldenrod1",high="darkgoldenrod4") +
+  geom_text(aes(label=rng_pri), 
+            position = position_dodge(0.9),hjust=1, color="black", size=2) + theme_minimal()+coord_flip() + ggtitle("Ranger Algorithm") +
+  theme(text = element_text(size=8))+
+  xlab("Most Important Variables") + ylab("Mean Decrease Accuracy") 
+
+pri2<-rng1 + theme(legend.position="none")
+```
+
+
+
+```{r pri model, fig.cap = "Important Variables for Principal Interviews"}
+
+### Combining two plots for the Boruta and Range packages
+grid.arrange(pri1, pri2,nrow=1, ncol=2) 
+
+```
+
+
+\newpage
+
+
+## Practitioner Interview Variables
+
+This instrument was used for an interview with one of the ECD practitioners working at the ELP. It consists of questions about the practitioner’s demographics, qualifications, educational background, teaching methods and attitudes toward “Learning through Play”.  It can be observed from Figure 2 that pra_qualification is in the top three for both methods.
+
+```{r warning=FALSE, message=FALSE, echo=FALSE, include=FALSE}
+
+########################### Data Cleaning - Practitioner Interview #########################
+
+
+### Selecting Practitioner Interviews variables
+all_pra<- dat%>%
+  dplyr::select(contains("pra_"),pd) 
+
+### Dropping variables with more than 20% nas  
+na_pra <-all_pra[, colMeans(is.na(all_pra)) <= 0.2] 
+
+### Imputing missing values using mice package
+imp <- mice(na_pra, ridge = 0.0001, threshold=1.1,seed = 2022)
+imp_pra<-complete(imp)
+
+### Converting variable classes 
+x <- sapply(imp_pra, is.character)
+imp_pra[x] <- lapply(imp_pra[x], as.factor)
+
+x <- sapply(imp_pra, is.integer)
+imp_pra[x] <- lapply(imp_pra[x], as.numeric)
+
+
+### Dropping variables with 1 unique value
+unq_pra<-imp_pra  %>%
+     dplyr::select(where(~ n_distinct(.) > 1))  
+
+
+### Removing factors of level 50 and above
+good <- names(unq_pra)[sapply(unq_pra, nlevels) < 50] 
+unq_pra <- unq_pra %>% dplyr::select(good)
+
+
+### Scaling independent numerical variables 
+pra<-unq_pra %>%
+    mutate_if(is.numeric, scale)
+
+
+################################# BORUTA Practitioner Interview #############################
+
+set.seed(2022)
+boruta2 <- Boruta(pd~., data =pra)
+#print(boruta2)
+
+### Fixing Tentative attributes
+roughFixMod <- TentativeRoughFix(boruta2)
+imps <- attStats(roughFixMod)
+
+### Variable Importance Scores
+imps2 = imps[imps$decision != 'Rejected', c('meanImp', 'decision')]
+boruta_pra<-imps2[order(-imps2$meanImp),]  # descending sort
+
+### Creating a data frame with only top 15 important variables
+b<-boruta_pra[ 1:15, c(1), drop=FALSE] 
+df3<-round(data.frame(b),1)
+df3 <- df3 %>% 
+  rownames_to_column(var = "Variables")
+
+
+### Plotting the graph for the first 15 important features
+bor2<-ggplot(data=df3, aes(reorder(Variables,meanImp), y=meanImp, fill=meanImp)) +
+  geom_bar(stat="identity") + 
+  scale_fill_gradient(low="darkgoldenrod1",high="darkgoldenrod4") +
+  geom_text(aes(label=meanImp), 
+        position = position_dodge(0.9),hjust=1, color="black", size=2)+
+  theme_minimal()+coord_flip()+ ggtitle("Boruta Algorithm") +
+  theme(text = element_text(size=8))+
+  xlab("Most Important Variables") + ylab("Mean Importance") 
+
+pra1<-bor2 + theme(legend.position="none")
+
+### Creating a table of important variables
+tab2<-boruta_pra
+tab2<-data.frame(rownames(tab2))
+colnames(tab2) <- "Pra_Variables"  
+
+
+################################# Ranger Practitioner Interview #############################
+
+### Running the ranger model 10 times
+set.seed(2022)
+xy2 <- replicate(10, {
+ ranger2 <- ranger(pd ~ .,
+                 data = pra,
+                 importance = "permutation")
+ importance(ranger2)
+}, simplify = FALSE)
+ 
+  if(is.list(xy2)) {
+    out <- do.call("cbind", lapply(xy2, function(x) x[]))
+    out <- as.data.frame(out, stringsAsFactors = TRUE)
+  } else out <- data.frame(Overall = beta[])
+  out <- abs(out[rownames(out) != "(Intercept)",,drop = FALSE])
+
+  
+### Creating a data frame with only top 15 important variables
+b<-rowMeans(out)                       #Getting the means from 10 iterations
+rng_pra<-head(b[order(-b)],15)
+
+df4<-round(data.frame(rng_pra),4)
+df4 <- df4 %>% 
+  rownames_to_column(var = "Variables")
+
+
+### Plotting the graph for the first 15 important features
+
+rng2<-ggplot(data=df4, aes(reorder(Variables,rng_pra), y=rng_pra, fill=rng_pra)) +
+  geom_bar(stat="identity")+ 
+    scale_fill_gradient(low="darkgoldenrod1",high="darkgoldenrod4") +
+  geom_text(aes(label=rng_pra), 
+            position = position_dodge(0.9),hjust=1, color="black", size=2) +
+   scale_x_discrete(guide = guide_axis(check.overlap = TRUE))+
+  theme_minimal()+coord_flip() + ggtitle("Ranger Algorithm") +
+  theme(text = element_text(size=8))+
+  xlab("Most Important Variables") + ylab("Mean Decrease Accuracy") 
+
+pra2<-rng2 + theme(legend.position="none")
+```
+
+
+```{r pra model, fig.cap = "Important Variables for Practitioner Interviews"}
+
+### Combining two plots for the Boruta and Range packages
+grid.arrange(pra1, pra2,nrow=1, ncol=2) 
+```
+
+\newpage
+
+## Environment Observations Variables
+
+Environment Observation was used to capture observations about the infrastructure (space, electricity, heating, sanitation etc) of the ELP, the availability of toys and teaching materials, and the outdoor space. Notably the first two important variables considering both algorithms are the same i.e., obs_toilect and obs_handwashing.
+
+
+```{r warning=FALSE, message=FALSE, echo=FALSE, include=FALSE}
+
+################# Data Cleaning - Environment Observation ################################ 
+
+### Selecting Environment Observation variables
+all_obs<- dat%>%
+  dplyr::select(contains("obs_"),pd) 
+
+### Dropping variables with more than 20% nas  
+na_obs <-all_obs[, colMeans(is.na(all_obs)) <= 0.2]   
+
+### Imputing missing values using mice package
+imp <- mice(na_obs, ridge = 0.0001, threshold=1.1,seed = 2022)
+imp_obs<-complete(imp)
+
+### Converting variable classes 
+x <- sapply(imp_obs, is.character)
+imp_obs[x] <- lapply(imp_obs[x], as.factor)
+
+x <- sapply(imp_obs, is.integer)
+imp_obs[x] <- lapply(imp_obs[x], as.numeric)
+
+
+### Dropping variables with 1 unique value
+unq_obs<-imp_obs  %>%
+     dplyr::select(where(~ n_distinct(.) > 1))  
+
+
+### Removing factors of level 50 and above
+good <- names(unq_obs)[sapply(unq_obs, nlevels) < 50] #89
+unq_obs <- unq_obs %>% dplyr::select(good)
+
+
+### Scaling independent numerical variables 
+obs<-unq_obs %>%
+    mutate_if(is.numeric, scale)
+
+
+########################## BORUTA - Environment Observation #############################
+
+set.seed(2022)
+boruta3 <- Boruta(pd~., data =obs)
+#print(boruta3)
+
+### Fixing Tentative attributes
+roughFixMod <- TentativeRoughFix(boruta3)
+imps <- attStats(roughFixMod)
+
+### Variable Importance Scores
+imps2 = imps[imps$decision != 'Rejected', c('meanImp', 'decision')]
+boruta_obs<-imps2[order(-imps2$meanImp),]  # descending sort
+
+### Creating a data frame with only top 15 important variables
+b<-boruta_obs[ 1:15, c(1), drop=FALSE] 
+df5<-round(data.frame(b),1)
+df5 <- df5 %>% 
+  rownames_to_column(var = "Variables")
+
+
+### Plotting the graph for the first 15 important features
+bor3<-ggplot(data=df5, aes(reorder(Variables,meanImp), y=meanImp, fill=meanImp)) +
+  geom_bar(stat="identity") + 
+  scale_fill_gradient(low="darkgoldenrod1",high="darkgoldenrod4") +
+  geom_text(aes(label=meanImp), 
+        position = position_dodge(0.9),hjust=1, color="black", size=2)+
+  theme_minimal()+coord_flip()+ ggtitle("Boruta Algorithm") +
+  theme(text = element_text(size=8))+
+  xlab("Most Important Variables") + ylab("Mean Importance") 
+
+obs1<-bor3 + theme(legend.position="none")
+
+### Creating a table of important variables
+tab3<-boruta_obs
+tab3<-data.frame(rownames(tab3))
+colnames(tab3) <- "Obs_Variables"  
+
+
+########################### Ranger-Environment Observation ###########################
+
+
+### Running the ranger model 10 times
+set.seed(2022)
+xy3 <- replicate(10, {
+ ranger3 <- ranger(pd ~ .,
+                 data = obs,
+                 importance = "permutation")
+ importance(ranger3)
+}, simplify = FALSE)
+ 
+  if(is.list(xy3)) {
+    out <- do.call("cbind", lapply(xy3, function(x) x[]))
+    out <- as.data.frame(out, stringsAsFactors = TRUE)
+  } else out <- data.frame(Overall = beta[])
+  out <- abs(out[rownames(out) != "(Intercept)",,drop = FALSE])
+
+### Creating a data frame with only top 15 important variables
+b<-rowMeans(out)                     #Getting the means from 10 iterations
+rng_obs<-head(b[order(-b)],15)
+
+df5<-round(data.frame(rng_obs),4)
+df5 <- df5 %>% 
+  rownames_to_column(var = "Variables")
+
+### Plotting the graph for the first 15 important features
+
+rng3<-ggplot(data=df5, aes(reorder(Variables,rng_obs), y=rng_obs, fill=rng_obs)) +
+  geom_bar(stat="identity")+ 
+    scale_fill_gradient(low="darkgoldenrod1",high="darkgoldenrod4") +
+  geom_text(aes(label=rng_obs), 
+            position = position_dodge(0.9),hjust=1, color="black", size=2) +
+   scale_x_discrete(guide = guide_axis(check.overlap = TRUE))+
+  theme_minimal()+coord_flip() + ggtitle("Ranger Algorithm") +
+  theme(text = element_text(size=8))+
+  xlab("Most Important Variables") + ylab("Mean Decrease Accuracy") 
+
+obs2<-rng3 + theme(legend.position="none")
+```
+
+
+
+```{r obs model, fig.cap = "Important Variables for Environment Observation "}
+
+### Combining two plots for the Boruta and Range packages
+grid.arrange(obs1, obs2,nrow=1, ncol=2) 
+
+```
+
+\newpage
+## Programme Quality Assessment Variables
+
+The Quality Assessment tool consists of 22 items and 5 sub-scales which are;
+
+* Learning Environment, 
+* Learning Assessments, 
+* Relationships and Interactions, 
+* Curriculum, and 
+* Teaching Strategies
+
+This instrument was not analysed on its own, rather it was combined with the remaining variables in the next sub-section. This is because most of the variables had missing values, with only 3 out of 38 variables with missing values less than 20% and the rest had missing values exceeding 70%.
+
+```{r}
+###################### Data Cleaning - Programme Quality Assessment #######################
+
+### Selecting pqa variables
+all_pqa<- dat%>%
+  dplyr::select(contains("pqa_"),pd) 
+
+### Dropping variables with more than 20% /65%/70% nas  
+na_pqa <-all_pqa[, colMeans(is.na(all_pqa)) <= 0.2]   
+na_pqa <-all_pqa[, colMeans(is.na(all_pqa)) <= 0.65]   
+na_pqa <-all_pqa[, colMeans(is.na(all_pqa)) <= 0.7]   
+
+```
+
+
+
+## Child Data
+
+This category constitutes all interview question linked directly to the child. Though the most important variable (child_age) is common for both methods, the rest of the variables from the ranger output important variables seem to have been mildly affected by random sampling implying that they might be weakly important. 
+
+```{r warning=FALSE, message=FALSE, echo=FALSE, include=FALSE}
+
+################################# Data Cleaning - Child Data ###############################
+
+### Selecting Child Data variables
+all_chn<- dat%>%
+  dplyr::select(contains("child"),pd)
+
+### Dropping variables with more than 20% nas  
+na_chn <-all_chn[, colMeans(is.na(all_chn)) <= 0.2] 
+
+
+### Imputing missing values using mice package
+imp <- mice(na_chn, ridge = 0.0001, threshold=1.1,seed = 2022, method = "cart" )
+imp_chn<-complete(imp)
+
+### Converting variable classes 
+x <- sapply(imp_chn, is.character)
+imp_chn[x] <- lapply(imp_chn[x], as.factor)
+
+x <- sapply(imp_chn, is.integer)
+imp_chn[x] <- lapply(imp_chn[x], as.numeric)
+
+
+### Dropping variables with 1 unique value
+unq_chn<-imp_chn  %>%
+     dplyr::select(where(~ n_distinct(.) > 1))  
+
+
+### Removing factors of level 50 and above
+good <- names(unq_chn)[sapply(unq_chn, nlevels) < 50] 
+fac_chn <- unq_chn %>% dplyr::select(good)
+
+
+### Scaling independent numerical variables 
+chn<-fac_chn %>%
+    mutate_if(is.numeric, scale)
+
+
+#################################### BORUTA - Child Data ####################################
+
+set.seed(2022)
+boruta4 <- Boruta(pd~., data =chn)
+#print(boruta4)
+
+### Fixing Tentative attributes
+roughFixMod <- TentativeRoughFix(boruta4)
+imps <- attStats(roughFixMod)
+
+### Variable Importance Scores
+imps2 = imps[imps$decision != 'Rejected', c('meanImp', 'decision')]
+boruta_chn<-imps2[order(-imps2$meanImp),]  # descending sort
+
+### Creating a data frame with only top 15 important variables
+b<-boruta_chn[ 1:15, c(1), drop=FALSE] 
+df7<-round(data.frame(b),1)
+df7 <- df7 %>% 
+  rownames_to_column(var = "Variables")
+
+
+### Plotting the graph for the first 15 important features
+bor4<-ggplot(data=df7, aes(reorder(Variables,meanImp), y=meanImp, fill=meanImp)) +
+  geom_bar(stat="identity") + 
+  scale_fill_gradient(low="darkgoldenrod1",high="darkgoldenrod4") +
+  geom_text(aes(label=meanImp), 
+        position = position_dodge(0.9),hjust=1, color="black", size=2)+
+  theme_minimal()+coord_flip()+ ggtitle("Boruta Algorithm") +
+  theme(text = element_text(size=8))+
+  xlab("Most Important Variables") + ylab("Mean Importance") 
+
+chn1<-bor4 + theme(legend.position="none")
+
+### Creating a table of important variables
+tab4<-boruta_chn
+tab4<-data.frame(rownames(tab4))
+colnames(tab4) <- "Child_Variables"  
+
+
+##################################### Ranger-Child Data ####### #############################
+
+### Running the ranger model 10 times
+set.seed(2022)
+xy4 <- replicate(10, {
+ ranger4 <- ranger(pd ~ .,
+                 data = chn,
+                 importance = "permutation")
+ importance(ranger4)
+}, simplify = FALSE)
+ 
+  if(is.list(xy4)) {
+    out <- do.call("cbind", lapply(xy4, function(x) x[]))
+    out <- as.data.frame(out, stringsAsFactors = TRUE)
+  } else out <- data.frame(Overall = beta[])
+  out <- abs(out[rownames(out) != "(Intercept)",,drop = FALSE])
+
+### Creating a data frame with only top 15 important variables
+b<-rowMeans(out)             #Getting the means from 10 iterations
+rng_chn<-head(b[order(-b)],15)
+
+df8<-round(data.frame(rng_chn),4)
+df8 <- df8 %>% 
+  rownames_to_column(var = "Variables")
+
+### Plotting the graph for the first 15 important features
+
+rng4<-ggplot(data=df8, aes(reorder(Variables,rng_chn), y=rng_chn, fill=rng_chn)) +
+  geom_bar(stat="identity")+ 
+    scale_fill_gradient(low="darkgoldenrod1",high="darkgoldenrod4") +
+  geom_text(aes(label=rng_chn), 
+            position = position_dodge(0.9),hjust=1, color="black", size=2) +
+  scale_x_discrete(guide = guide_axis(check.overlap = TRUE))+
+  theme_minimal()+coord_flip() + ggtitle("Ranger Algorithm") +
+  theme(text = element_text(size=8))+
+  xlab("Most Important Variables") + ylab("Mean Decrease Accuracy") 
+
+chn2<-rng4 + theme(legend.position="none")
+```
+
+
+```{r chn model, fig.cap = "Important Variables for Child data"}
+
+### Combining two plots for the Boruta and Range packages
+grid.arrange(chn1, chn2,nrow=1, ncol=2) 
+
+```
+
+\newpage
+
+## Other Variables
+
+This part constitutes all the remaining variables which were not part of Primary Interviews, Practitioner Interview, Environment Observation or Child data. After running 99 iterations of Boruta algorithm, 56 variables were confirmed to be important while 81 were unimportant. Similar to what has been observed, the top 15 important attributes for both algorithms are almost the same with the rankings varying slightly.
+
+```{r warning=FALSE, message=FALSE, echo=FALSE, include=FALSE }
+
+########################### Data Cleaning - Other Variables #############################
+
+### Selecting Other variables
+others<- dat
+all_other<-dplyr::select(others, -contains("pri_"),pd) 
+all_other<-dplyr::select(all_other, -contains("pra_"),pd)
+all_other<-dplyr::select(all_other, -contains("obs_"),pd)
+all_other<-dplyr::select(all_other, -contains("child"),pd)
+all_other<-dplyr::select(all_other, -starts_with("X"),pd)
+
+### Dropping variables with more than 20% nas  
+na_oth <-all_other[, colMeans(is.na(all_other)) <= 0.2]
+
+### Imputing missing values using mice package
+imp <- mice(na_oth, ridge = 0.0001, threshold=1.1,seed = 2022, method = "cart")
+imp_oth<-complete(imp)
+
+### Converting variable classes 
+x <- sapply(imp_oth, is.character)
+imp_oth[x] <- lapply(imp_oth[x], as.factor)
+
+x <- sapply(imp_oth, is.integer)
+imp_oth[x] <- lapply(imp_oth[x], as.numeric)
+
+
+### Dropping variables with 1 unique value
+unq_oth<-imp_oth  %>%
+     dplyr::select(where(~ n_distinct(.) > 1))  
+
+
+### Removing factors of level 50 and above
+good <- names(unq_oth)[sapply(unq_oth, nlevels) < 50] 
+fac_oth <- unq_oth %>% dplyr::select(good)
+
+### Scaling independent numerical variables 
+oth<-fac_oth %>%
+    mutate_if(is.numeric, scale)
+
+
+################################ BORUTA - Other Variables ###################################
+
+set.seed(2022)
+boruta5 <- Boruta(pd~., data =oth)
+#print(boruta5)
+
+### Fixing Tentative attributes
+roughFixMod <- TentativeRoughFix(boruta5)
+imps <- attStats(roughFixMod)
+
+### Variable Importance Scores
+imps2 = imps[imps$decision != 'Rejected', c('meanImp', 'decision')]
+boruta_oth<-imps2[order(-imps2$meanImp),]  # descending sort
+
+### Creating a data frame with only top 15 important variables
+b<-boruta_oth[ 1:15, c(1), drop=FALSE] 
+df9<-round(data.frame(b),1)
+df9 <- df9 %>% 
+  rownames_to_column(var = "Variables")
+
+
+### Plotting the graph for the first 15 important features
+bor5<-ggplot(data=df9, aes(reorder(Variables,meanImp), y=meanImp, fill=meanImp)) +
+  geom_bar(stat="identity") + 
+  scale_fill_gradient(low="darkgoldenrod1",high="darkgoldenrod4") +
+  geom_text(aes(label=meanImp), 
+        position = position_dodge(0.9),hjust=1, color="black", size=2)+
+  theme(text = element_text(size=8))+
+  theme_minimal()+coord_flip()+ ggtitle("Boruta Algorithm") +
+  xlab("Most Important Variables") + ylab("Mean Importance") 
+
+oth1<-bor5 + theme(legend.position="none")
+
+### Creating a table of important variables
+tab5<-boruta_oth
+tab5<-data.frame(rownames(tab5))
+colnames(tab5) <- "Other_Variables"  
+
+
+##################################### Ranger- Other Variables ##############################
+
+### Running the ranger model 10 times
+set.seed(2022)
+xy5 <- replicate(10, {
+ ranger5 <- ranger(pd ~ .,
+                 data = oth,
+                 importance = "permutation")
+ importance(ranger5)
+}, simplify = FALSE)
+ 
+  if(is.list(xy5)) {
+    out <- do.call("cbind", lapply(xy5, function(x) x[]))
+    out <- as.data.frame(out, stringsAsFactors = TRUE)
+  } else out <- data.frame(Overall = beta[])
+  out <- abs(out[rownames(out) != "(Intercept)",,drop = FALSE])
+
+### Creating a data frame with only top 15 important variables
+b<-rowMeans(out)             #Getting the means from 10 iterations
+rng_oth<-head(b[order(-b)],15)
+
+df10<-round(data.frame(rng_oth),4)
+df10 <- df10 %>% 
+  rownames_to_column(var = "Variables")
+
+
+### Plotting the graph for the first 15 important features
+rng5<-ggplot(data=df10, aes(reorder(Variables,rng_oth), y=rng_oth, fill=rng_oth)) +
+  geom_bar(stat="identity")+ 
+    scale_fill_gradient(low="darkgoldenrod1",high="darkgoldenrod4") +
+  geom_text(aes(label=rng_oth), 
+            position = position_dodge(0.9),hjust=1, color="black", size=2) +
+  scale_x_discrete(guide = guide_axis(check.overlap = TRUE))+
+  theme_minimal()+coord_flip() + ggtitle("Ranger Algorithm") +
+  theme(text = element_text(size=8))+
+  xlab("Most Important Variables") + ylab("Mean Decreacy Accuracy") 
+
+oth2<-rng5 + theme(legend.position="none")
+```
+
+
+```{r oth model, fig.cap = "Important Variables for Other Variables "}
+
+### Combining two plots for the Boruta and Range packages
+grid.arrange(oth1, oth2,nrow=1, ncol=2) 
+
+```
+
+\newpage
+
+## Overall Important Variables
+
+All the important variables from the Boruta output were combined and run again on the two algorithms. It is interesting to note that both algorithms produced the first 6 variables that are similar. Overall, after considering all the important variables from all categories child_domain_4, child_domain_3 and child_score_item_15 are the leading variables that are associated with young children who thrive against the odds.
+
+```{r warning=FALSE, message=FALSE, echo=FALSE, include=FALSE}
+
+### Selecting all Important Variables
+sub1<-pri %>% select(pd,pri_qualification,pri_language_8,pri_calc_time_close,pri_registered_partial,pri_subsidy,pri_registered_programme,pri_time_close_hours,pri_covid_precautions,pri_funding,pri_covid_awareness,pri_moneyother,pri_calc_time_open,pri_food_type,pri_language_5,pri_facilities,pri_records,pri_separate,pri_clinic_travel,pri_support_provider,pri_holidays,pri_network_type,pri_funding_subsidy,pri_language_2,pri_meal,pri_year,pri_land,pri_money,pri_time_open_hours,pri_registered_npo,pri_funding_donations,pri_language_6,pri_dsd_unregistered,pri_languageother,pri_meal_2,pri_meal_1)
+sub2<-pra %>% select(pra_groupings,pra_qualification,pra_groupings_2,pra_groupings_3,pra_free_play,pra_language,pra_plan_4yrs,pra_plan_5yrs,pra_ncf_trainer,pra_groupings_5,pra_qualificationother,pra_groupings_1,pra_cohort,pra_free_play_outdoor,pra_groupings_4,pra_plan_5yrsother,pra_ncf_trainerother)
+
+sub3<-obs %>% select(obs_toilet,obs_handwashing,obs_area_3,obs_water,obs_classrooms,obs_handwashing_1,obs_materials_13,obs_toilet_1,obs_lighting_2,obs_materials_10,obs_materials_14,obs_equipment,obs_materials_8,obs_access,obs_materials_15,obs_materials_5,obs_area_4,obs_area_5,obs_toilet_7,obs_water_running,obs_handwashing_3,obs_toilet_6,obs_area_1,obs_materials_19,obs_toilet_size_flush,obs_toilet_4,obs_lighting_1,obs_toilet_size_pit,obs_area_6,obs_area_7,obs_space,obs_materials_2,obs_heating_2,obs_materials_11,obs_materials_12,obs_gate,obs_materials_18,obs_area_2,obs_toilets_gender,obs_materials_6,obs_cooking_2)
+
+sub4<-chn %>% select(child_age,child_domain_4,child_score_item_15,child_domain_3,dc_count_children_present_m,count_children_precovid,dc_count_children_usual_m,dc_count_children_precovid_m,ward_count_children_precovid_m,mn_count_children_precovid_m,mn_count_children_usual_m,count_children_attendance,child_score_item_9,prov_count_children_precovid_m,prov_count_children_usual_m,ward_count_children_usual_m,count_toilets_children,mn_count_children_present_m,prov_count_children_present_m,child_age_group,ward_count_children_present_m,language_child,child_score_item_17,count_children_present,child_height)
+
+sub5<-oth%>% select(id_enumerator,ses_proxy,ses_cat,id_ward,longitude,mn_registered_dsd_fc_m,mn_firstaid_m,mn_toilet_1_m,mn_water_tap_m,ward_registered_dsd_fc_m,count_register_gender,dc_transport_m,count_register_gender_male,latitude,dc_firstaid_m,count_register_race, mn_count_staff_cat_prac_m,count_register_all,mn_separate_m,ward_count_staff_cat_prac_m,mn_aftercare_m,teacher_emotional_total,mn_subsidy_m,teacher_social_cooperate,prov_best,teacher_social_total,prov_aftercare_m,mn_transport_m,mn_bank_m,prov_bank_m,mn_space_m,dc_count_staff_cat_prac_m,ward_water_tap_m,id_facility,dc_aftercare_m,dc_building_con_m,ward_subsidy_m,ward_best,ward_toilet_1_m,count_register_race_african,ward_count_register_all_m,ward_separate_m,dc_separate_m,id_dc_n,dc_meals_m,dc_water_tap_m,dc_toilet_1_m,mn_meals_m,count_register_race_white,prov_water_tap_m,ward_aftercare_m,id_ward_n,prov_firstaid_m,prov_school_m,prov_transport_m,pqa_class)
+
+### Joining all the dataframes for all categories
+dd <- cbind(sub1, sub2)
+dd <- cbind(dd, sub3)
+dd <- cbind(dd, sub4)
+sub <- cbind(dd, sub5)
+comb<-sub
+
+################################ BORUTA - Overall Important Variables ######################
+
+set.seed(2022)
+boruta6 <- Boruta(pd~., data =comb)
+#print(boruta6)
+
+### Variable Importance Scores
+roughFixMod <- TentativeRoughFix(boruta6)
+imps <- attStats(roughFixMod)
+
+### Fixing Tentative attributes
+imps2 = imps[imps$decision != 'Rejected', c('meanImp', 'decision')]
+boruta_comb<-imps2[order(-imps2$meanImp),]  # descending sort
+
+### Creating a data frame with only top 15 important variables
+b<-boruta_comb[ 1:15, c(1), drop=FALSE] 
+df11<-round(data.frame(b),1)
+df11 <- df11 %>% 
+  rownames_to_column(var = "Variables")
+
+
+### Plotting the graph for the first 15 important features
+bor6<-ggplot(data=df11, aes(reorder(Variables,meanImp), y=meanImp, fill=meanImp)) +
+  geom_bar(stat="identity") + 
+  scale_fill_gradient(low="darkgoldenrod1",high="darkgoldenrod4") +
+  geom_text(aes(label=meanImp), 
+        position = position_dodge(0.9),hjust=1, color="black", size=2)+
+  theme_minimal()+coord_flip()+ ggtitle("Boruta Algorithm") +
+  theme(text = element_text(size=8))+
+  xlab("Most Important Variables") + ylab("Mean Importance") 
+
+comb1<-bor6 + theme(legend.position="none")
+
+### Creating a table of important variables
+tab6<-boruta_comb
+tab6<-data.frame(rownames(tab6))
+colnames(tab6) <- "Important_Variables"  
+
+
+                                                   
+################################### Range - Overall Important Variables ####################
+
+### Running the ranger model 10 times
+set.seed(2022)
+xy6 <- replicate(10, {
+ ranger6 <- ranger(pd ~ .,
+                 data = comb,
+                 importance = "permutation")
+ importance(ranger6)
+}, simplify = FALSE)
+ 
+  if(is.list(xy6)) {
+    out <- do.call("cbind", lapply(xy6, function(x) x[]))
+    out <- as.data.frame(out, stringsAsFactors = TRUE)
+  } else out <- data.frame(Overall = beta[])
+  out <- abs(out[rownames(out) != "(Intercept)",,drop = FALSE])
+
+### Creating a data frame with only top 15 important variables
+b<-rowMeans(out)             #Getting the means from 10 iterations
+rng_comb<-head(b[order(-b)],15)
+
+df12<-round(data.frame(rng_comb),4)
+df12 <- df12 %>% 
+  rownames_to_column(var = "Variables")
+
+### Plotting the graph for the first 15 important features
+
+rng6<-ggplot(data=df12, aes(reorder(Variables,rng_comb), y=rng_comb, fill=rng_comb)) +
+  geom_bar(stat="identity")+ 
+    scale_fill_gradient(low="darkgoldenrod1",high="darkgoldenrod4") +
+  geom_text(aes(label=rng_comb), 
+            position = position_dodge(0.9),hjust=1, color="black", size=2) +
+  scale_x_discrete(guide = guide_axis(check.overlap = TRUE))+
+  theme_minimal()+coord_flip() + ggtitle("Ranger Algorithm") +
+  theme(text = element_text(size=8))+
+  xlab("Most Important Variables") + ylab("Mean Decreacy Accuracy") 
+
+comb2<-rng6 + theme(legend.position="none")
+```
+
+
+```{r comb model, fig.cap = "Overall Important Variables"}
+
+### Combining two plots for the Boruta and Range packages
+grid.arrange(comb1, comb2,nrow=1, ncol=2)
+
+```
+
+\newpage
+
+## Sensitivity Analysis
+
+Boruta unlike many other algorithms does not have many parameters to tune except for **maxRuns** which is the maximal number of random forests runs with a default of 100. Different maxRuns were run ranging from 50 to 250 and the results are shown in Table 1 below. It can be observed that as the number of maxRuns increases the number of important variables selected also increases. It is also important to note that the rankings of variable importance are unaffected by the changes in maxRuns, see Appendix 2. 
+
+```{r warning=FALSE, message=FALSE, echo=FALSE, include=FALSE}
+
+################################Boruta when maxRuns=50 #################################
+
+set.seed(2022)
+mod1 <- Boruta(pd~., data =sub, maxRuns=50)
+#print(mod1)
+
+### Variable Importance Scores
+roughFixMod <- TentativeRoughFix(mod1)
+imps <- attStats(roughFixMod)
+
+### Fixing Tentative attributes
+imps2 = imps[imps$decision != 'Rejected', c('meanImp', 'decision')]
+d1<-imps2[order(-imps2$meanImp),]  # descending sort
+
+### Creating a data frame with only top 15 important variables
+b<-d1[ 1:15, c(1), drop=FALSE] 
+dt1<-round(data.frame(b),1)
+dt1 <- dt1 %>% 
+  rownames_to_column(var = "Variables")
+
+################################Boruta when maxRuns=150 #################################
+
+set.seed(2022)
+mod2 <- Boruta(pd~., data =sub, maxRuns=150)
+#print(mod2)
+
+### Variable Importance Scores
+roughFixMod <- TentativeRoughFix(mod2)
+imps <- attStats(roughFixMod)
+
+### Fixing Tentative attributes
+imps2 = imps[imps$decision != 'Rejected', c('meanImp', 'decision')]
+d2<-imps2[order(-imps2$meanImp),]  # descending sort
+
+### Creating a data frame with only top 15 important variables
+b<-d2[ 1:15, c(1), drop=FALSE] 
+dt2<-round(data.frame(b),1)
+dt2 <- dt2 %>% 
+  rownames_to_column(var = "Variables")
+
+
+################################Boruta when maxRuns=200 #################################
+
+set.seed(2022)
+mod3 <- Boruta(pd~., data =sub, maxRuns=200)
+#print(mod3)
+
+### Variable Importance Scores
+roughFixMod <- TentativeRoughFix(mod3)
+imps <- attStats(roughFixMod)
+
+### Fixing Tentative attributes
+imps2 = imps[imps$decision != 'Rejected', c('meanImp', 'decision')]
+d3<-imps2[order(-imps2$meanImp),]  # descending sort
+
+### Creating a data frame with only top 15 important variables
+b<-d3[ 1:15, c(1), drop=FALSE] 
+dt3<-round(data.frame(b),1)
+dt3 <- dt3 %>% 
+  rownames_to_column(var = "Variables")
+
+
+################################Boruta when maxRuns=250 #################################
+
+set.seed(2022)
+mod4 <- Boruta(pd~., data =sub, maxRuns=250)
+#print(mod4)
+
+### Variable Importance Scores
+roughFixMod <- TentativeRoughFix(mod4)
+imps <- attStats(roughFixMod)
+
+### Fixing Tentative attributes
+imps2 = imps[imps$decision != 'Rejected', c('meanImp', 'decision')]
+d4<-imps2[order(-imps2$meanImp),]  # descending sort
+
+### Creating a data frame with only top 15 important variables
+b<-d4[ 1:15, c(1), drop=FALSE] 
+dt4<-round(data.frame(b),1)
+dt4 <- dt4 %>% 
+  rownames_to_column(var = "Variables")
+
+```
+
+
+```{r}
+
+### Creating a dataframe of the results
+maxRuns<-c(50,100,150,200,250)
+Important<-c(14,35,42,46,51)
+UnImportant<-c(97,108,110,110,111)
+Tentative<-c(63,31,22,18,12)
+df <- data.frame(maxRuns,Important,UnImportant,Tentative)
+
+kable(df, digits = 3, format = "pandoc",   caption = "\\textcolor{black}{Effect of varying the maxRuns}")
+
+```
+
+\newpage
+
+## Lasso Regularization
+
+The algorithms that have been used so far in this report are based on wrapper feature selection built by performing the random forest classification. For comparability purposes, Lasso regularization which is an embedded selection method which penalize a feature given a coefficient threshold was run on the overall important variables from all categories. Considering only the top 15 variables there is a significant difference compared to Boruta and Ranger results, with only two variables that are common to all methods, see Figure 7.
+
+```{r}
+
+###################################### Lasso ###########################################
+
+### Putting factor variables together
+is.fact<-sapply(comb, is.factor)
+factors<-comb[,is.fact]
+xfactors <- model.matrix(comb$pd~., data=factors)
+
+### Putting numeric variables together
+is.num<-sapply(comb, is.numeric)
+num_fact<-comb[,is.num]
+
+### Combining numeric and factor variables
+x<- as.matrix(data.frame (num_fact,xfactors))
+y<- comb$pd
+
+### Running the Lasso model
+set.seed(222)
+lasso6 <- cv.glmnet(x = x, y = y, alpha = 1,family="binomial")
+#coef(lasso6)
+
+### Getting the top 15 Important Variables
+f<-as.matrix(coef(lasso6, lasso6$lambda.min))
+fg<-head(f[order(-f),],15)
+ff<-round(data.frame(fg),2)
+
+```
+
+
+
+```{r lasso model, fig.cap = "Lasso Important Variables"}
+ff <- ff %>% 
+  rownames_to_column(var = "Variables")
+
+### Plotting the graph for the first 15 important features
+
+lasso<-ggplot(data=df12, aes(reorder(Variables,rng_comb), y=rng_comb, fill=rng_comb)) +
+  geom_bar(stat="identity")+ 
+    scale_fill_gradient(low="darkgoldenrod1",high="darkgoldenrod4") +
+  geom_text(aes(label=rng_comb), 
+            position = position_dodge(0.9),hjust=2, color="black", size=2) + theme_minimal()+coord_flip() + ggtitle("Lasso Regularisation") +
+  xlab("Most Important Variables") + ylab("Lambda") 
+
+lass<-lasso + theme(legend.position="none")
+lass
+```
+
+\newpage
+
+# \textcolor{yellow}{Discussions and Conclusions}
+
+The analysis showed that both Boruta and Ranger algorithms result in important features that are almost similar with slight difference in the rankings. On the other hand, important variables obtained from Lasso regularization were a bit different compared to these other two algorithms. This can be expected as Lasso algorithm is an embedded method which selects the important features while the model is being trained whereas Boruta and Ranger are wrappers method built around the random forest classification algorithm. However, it is worth noting that the domain 2 which is Emergent Numeracy and Mathematics and domain 4 which is Emergent Literacy and Language were found to be the most key features associated with young children who thrive against the odds as they appeared in the top list of all the three methods.
+
+Though Boruta provides unbiased and stable selection of important and non-important attributes from an information system, it should be noted that it is a heuristic procedure designed to find all relevant attributes, including weakly relevant attributes. This was reflected when the algorithm was run with different values of maxRuns which had no effect on the rankings of the data and only affected the weakly important features which were categorised as tentative.  
+
+In addition, both Boruta and Ranger packages do not handle missing values at all. This is quite a problem when working with real data sets like our dataset with missing values on many variables. Although multiple imputation was done, (Acock, 2005) recommended that the best solution is to minimize missing values when the data are being collected. Furthermore, when missing values cannot be avoided, it is imperative to know the classifications of missing values as these classifications influence the optimal strategy for working with missing values.
+
+Boruta algorithm because of its standard feature importance method of decision trees, tends to overestimate the importance of high-frequency or high-cardinality variables which may result in a wrong feature selection. However, to deal with these drawbacks, feature selection can be performed using BorutaShap in Python. This method combines both the Boruta feature selection algorithm with shapley values.  Unlike the original R package, which limits the user to a Random Forest model, BorutaShap allows the user to choose any Tree Based learner as the base model in the feature selection process. 
+
+
+
+
+\newpage
+
+# \textcolor{yellow}{References}
+
+Acock, A.C., 2005. Working with missing values. Journal of Marriage and family, 67(4), pp.1012-1028.
+
+Bradley, E.H., Curry, L.A., Ramanadhan, S., Rowe, L., Nembhard, I.M. and Krumholz, H.M., 2009. Research in action: using positive deviance to improve quality of health care. Implementation science, 4(1), pp.1-11.
+
+Degenhardt, F., Seifert, S. and Szymczak, S., 2019. Evaluation of variable selection methods for random forests and omics data sets. Briefings in bioinformatics, 20(2), pp.492-503.
+Gnana, D.A.A., Balamurugan, S.A.A. and Leavline, E.J., 2016. Literature review on feature selection methods for high-dimensional data. International Journal of Computer Applications, 136(1), pp.9-17.
+
+Grömping, U., 2015. Variable importance in regression models. Wiley Interdisciplinary Reviews: Computational Statistics, 7(2), pp.137-152.
+
+Herington, M.J. and van de Fliert, E., 2018. Positive deviance in theory and practice: A conceptual review. Deviant Behavior, 39(5), pp.664-678.
+
+Karegowda, A.G., Jayaram, M.A. and Manjunath, A.S., 2010. Feature subset selection problem using wrapper approach in supervised learning. International journal of Computer applications, 1(7), pp.13-17.
+
+Kursa, M.B. and Rudnicki, W.R., 2010. Feature selection with the Boruta package. Journal of statistical software, 36, pp.1-13.
+
+Kursa, M.B. and Rudnicki, W.R., 2011. The all relevant feature selection using random forest. arXiv preprint arXiv:1106.5112.
+
+Lapping, K., Marsh, D.R., Rosenbaum, J., Swedberg, E., Sternin, J., Sternin, M. and Schroeder, D.G., 2002. The positive deviance approach: Challenges and opportunities for the future. Food and Nutrition Bulletin, 23(4_suppl_1), pp.128-135.
+
+Marsh, D.R., Schroeder, D.G., Dearden, K.A., Sternin, J. and Sternin, M., 2004. The power of positive deviance. Bmj, 329(7475), pp.1177-1179.
+
+Nakai, M., Chen, D.G., Nishimura, K. and Miyamoto, Y., 2014. Comparative study of four methods in missing value imputations under missing completely at random mechanism. Open Journal of Statistics, 2014.
+
+Tiyasha, T., Tung, T.M., Bhagat, S.K., Tan, M.L., Jawad, A.H., Mohtar, W.H.M.W. and Yaseen, Z.M., 2021. Functionalization of remote sensing and on-site data for simulating surface water dissolved oxygen: Development of hybrid tree-based artificial intelligence models. Marine pollution bulletin, 170, p.112639.
+
+Wundervald, B., Parnell, A.C. and Domijan, K., 2020. Generalizing gain penalization for feature selection in tree-based models. IEEE Access, 8, pp.190231-190239.
+
+
+
+
+
+
